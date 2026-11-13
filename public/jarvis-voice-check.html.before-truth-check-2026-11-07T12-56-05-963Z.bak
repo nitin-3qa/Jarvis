@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>JARVIS Voice Pipeline Check</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,-apple-system,Segoe UI,sans-serif}*{box-sizing:border-box}body{margin:0;background:#06131d;color:#e0f6ff;line-height:1.5}main{max-width:860px;margin:36px auto;padding:0 18px}h1{font-size:29px;letter-spacing:3px;color:#59dcf6;margin-bottom:2px}h2{font-size:18px;margin:0 0 12px}.sub{color:#96b8c5;margin:0 0 22px}.panel{border:1px solid #235367;background:#0a2130;border-radius:13px;padding:19px;margin-bottom:14px}.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}button{cursor:pointer;font-weight:650;background:#0b7493;border:1px solid #36bedc;color:white;border-radius:7px;padding:10px 15px;min-height:42px}button:disabled{opacity:.5;cursor:not-allowed}.secondary{background:#183849}.danger{background:#7f2e43}#meter{height:20px;background:#102f40;border-radius:6px;overflow:hidden;margin:10px 0}#bar{background:linear-gradient(90deg,#19a6c3,#65edcf);height:100%;width:0;transition:width .1s}pre{background:#04111b;border:1px solid #17435b;border-radius:6px;padding:12px;white-space:pre-wrap;word-break:break-word;max-height:270px;overflow:auto}small,.muted{color:#a3c2cd}#current{font-size:17px;min-height:30px;color:#67e2cb}.badge{display:inline-block;padding:2px 9px;border-radius:20px;background:#304656;font-weight:700}.pass{color:#84f6c5}.fail{color:#ff9ca7}.warn{color:#f7db92}a{color:#75dffd}ol{padding-left:20px}li{margin:4px 0}</style>
+</head>
+<body><main>
+<h1>J.A.R.V.I.S. / VOICE DIAGNOSTIC</h1>
+<p class="sub">Temporary diagnostic for the original hologram. No model training, source code replacement, location tracking, or file access.</p>
+<section class="panel"><h2>1. Local Whisper service</h2><div class="row"><button id="health">Check Whisper</button><span id="healthResult" class="badge">Not checked</span></div><small>Uses <code>http://127.0.0.1:8766/health</code> only.</small></section>
+<section class="panel"><h2>2. Microphone → recording → Whisper transcription</h2><p>Press <strong>Record for 6 seconds</strong> and say: “Hey Jarvis, what is artificial intelligence?” The voice is sent only to your local Whisper service at 127.0.0.1:8766.</p><div class="row"><button id="record">Record for 6 seconds</button><button id="stop" class="danger" disabled>Stop recording</button><span id="micStatus" class="badge">Not tested</span></div><div id="meter"><div id="bar"></div></div><div class="row"><span>Measured peak microphone level: <strong id="peak">—</strong></span><span>Audio bytes: <strong id="bytes">—</strong></span></div><p id="current"></p><p><strong>Whisper transcript:</strong> <span id="transcript">—</span></p><small>The microphone will stop automatically. The recording is not stored in your project. It is not uploaded to ChatGPT.</small></section>
+<section class="panel"><h2>3. Speaking test</h2><div class="row"><button id="speak">Test voice speaker</button><span id="speakerResult" class="badge">Not tested</span></div><p class="muted">If you hear the test phrase, speakers work. This does not test your original hologram's TTS integration.</p></section>
+<section class="panel"><h2>4. Diagnostic report</h2><p>The report has no microphone recording or transcript by default. Share a screenshot of this page to isolate the problem.</p><div class="row"><button id="copy" class="secondary">Copy diagnostic report</button><button id="refresh" class="secondary">Check again</button></div><pre id="report" aria-live="polite"></pre></section>
+<p><a href="/">Back to original JARVIS hologram</a></p>
+</main>
+<script>
+(() => {
+  'use strict';
+  const el = id => document.getElementById(id);
+  const report = {page:'JARVIS voice diagnostic',time:new Date().toISOString(),origin:location.origin,service:'untested',mic:'untested',peak:0,recordedBytes:0,transcription:'untested',speaker:'untested',errors:[]};
+  const set = (id,value)=>{el(id).textContent=value};
+  const update = ()=>set('report',JSON.stringify(report,null,2));
+  let active=null;
+  function noteError(stage,error) { report.errors.push(`${stage}: ${error?.message||String(error)}`); update(); }
+  async function checkWhisper() {
+    set('healthResult','Checking…');
+    try {
+      const ctl = new AbortController(); const timeout=setTimeout(()=>ctl.abort(),5000);
+      let r; try {r=await fetch('http://127.0.0.1:8766/health',{cache:'no-store',signal:ctl.signal});} finally {clearTimeout(timeout)}
+      if(!r.ok) throw Error(`HTTP ${r.status}`);
+      const data=await r.json();
+      if(data.ready!==true) throw Error('Service responded but model not ready');
+      report.service=`PASS: ready (${String(data.model||'model unspecified')})`;
+      set('healthResult','READY');
+      el('healthResult').className='badge pass';
+      update();return true;
+    } catch(e) {
+      report.service='FAIL: '+String(e?.message||e);noteError('Whisper health',e);
+      set('healthResult','NOT READY');el('healthResult').className='badge fail';update();return false;
+    }
+  }
+  const getSupportedMime=()=>['audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus','audio/mp4'].find(v=>MediaRecorder.isTypeSupported(v));
+  function stopRecording(){
+    if(active?.recorder?.state==='recording') active.recorder.stop();
+  }
+  async function runRecord(){
+    if(active) return;
+    el('record').disabled=true; el('stop').disabled=false;
+    set('transcript','—');set('bytes','—');set('peak','—');set('current','Requesting microphone permission…');
+    report.mic='initializing';report.transcription='untested';report.peak=0;report.recordedBytes=0;update();
+    let stream=null, ctx=null, raf=0,timer=0;
+    try {
+      if(!navigator.mediaDevices?.getUserMedia) throw Error('getUserMedia not available; use http://127.0.0.1:5173');
+      if(!window.MediaRecorder) throw Error('MediaRecorder unsupported in this browser');
+      stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
+      const tracks=stream.getAudioTracks();
+      if(!tracks.length) throw Error('No microphone audio track');
+      ctx=new (window.AudioContext||window.webkitAudioContext)();
+      await ctx.resume();
+      if(ctx.state!=='running') throw Error('AudioContext state='+ctx.state);
+      const source=ctx.createMediaStreamSource(stream);
+      const analyser=ctx.createAnalyser();analyser.fftSize=2048;source.connect(analyser);
+      const waveform=new Uint8Array(analyser.fftSize);
+      let peak=0;let rmsSamples=0;
+      const measure=()=>{
+        analyser.getByteTimeDomainData(waveform);
+        let sum=0;for(let i=0;i<waveform.length;i++){const v=(waveform[i]-128)/128;sum+=v*v;}
+        const rms=Math.sqrt(sum/waveform.length);
+        peak=Math.max(peak,rms);
+        rmsSamples++;
+        const percent=Math.min(100,Math.round(rms*350));
+        el('bar').style.width=percent+'%';
+        report.peak=+(peak*100).toFixed(2);
+        set('peak',report.peak+'% RMS');
+        raf=requestAnimationFrame(measure);
+      }; measure();
+      const mime=getSupportedMime();
+      if(!mime) throw Error('No browser audio format supported by the local Whisper service');
+      const recorder=new MediaRecorder(stream,{mimeType:mime});
+      active={recorder};
+      const chunks=[];
+      const finished=new Promise((resolve,reject)=>{
+        recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};
+        recorder.onstop=resolve;
+        recorder.onerror=e=>reject(Error(e?.error?.message||'MediaRecorder error'));
+      });
+      recorder.start(250);
+      report.mic=`recording (${tracks[0].readyState}, context ${ctx.state})`;
+      set('micStatus','RECORDING');set('current','Speak now: Hey Jarvis, what is artificial intelligence?');update();
+      timer=setTimeout(stopRecording,6000);
+      await finished;
+      clearTimeout(timer);cancelAnimationFrame(raf);raf=0;
+      const blob=new Blob(chunks,{type:recorder.mimeType});
+      report.recordedBytes=blob.size;
+      report.mic=peak>.007?`PASS: microphone samples measured, peak ${(peak*100).toFixed(2)}%`:`LOW INPUT: peak ${(peak*100).toFixed(2)}%`;
+      set('bytes',blob.size.toLocaleString());set('micStatus',peak>.007?'MIC CAPTURED':'MIC VERY QUIET');update();
+      // Release microphone before CPU-heavy model inference.
+      stream.getTracks().forEach(t=>t.stop());stream=null;
+      await ctx.close();ctx=null;
+      set('current','Sending recorded audio to local Whisper…');
+      if(blob.size<100) throw Error('Recorded audio is empty');
+      const ctl=new AbortController();const timeout=setTimeout(()=>ctl.abort(),45000);
+      let response;
+      try {response=await fetch('http://127.0.0.1:8766/transcribe',{method:'POST',headers:{'Content-Type':recorder.mimeType},body:blob,signal:ctl.signal});}
+      finally {clearTimeout(timeout)}
+      let data;try{data=await response.json()}catch{data={}}
+      if(!response.ok)throw Error(`Whisper HTTP ${response.status}: ${data.error||'unknown'}`);
+      const phrase=String(data.text||'').trim();
+      set('transcript',phrase||'(Whisper returned empty text)');
+      report.transcription=phrase?'PASS: transcript returned':'FAIL: empty transcript (no usable speech or model missed words)';
+      set('current',phrase?'Local Whisper returned a transcript.':'Audio sent, but Whisper did not recognize words.');
+      update();
+    } catch(e) {
+      const message=String(e?.message||e);
+      set('current','ERROR: '+message);set('micStatus','ERROR');
+      if(report.mic==='initializing') report.mic='FAIL: '+message;
+      report.transcription='FAIL: '+message;noteError('record/transcribe',e);update();
+    } finally {
+      clearTimeout(timer);cancelAnimationFrame(raf);
+      try{stream?.getTracks().forEach(t=>t.stop())}catch{}
+      try{if(ctx && ctx.state!=='closed') await ctx.close()}catch{}
+      active=null;el('record').disabled=false;el('stop').disabled=true;
+    }
+  }
+  function testSpeaker(){
+    if(!('speechSynthesis' in window)){set('speakerResult','UNSUPPORTED');report.speaker='FAIL: speechSynthesis not supported';update();return;}
+    window.speechSynthesis.cancel();
+    const msg=new SpeechSynthesisUtterance('JARVIS speaker test. If you hear me, your browser voice playback works.');
+    msg.lang='en-US';msg.rate=0.93;
+    msg.onstart=()=>{set('speakerResult','PLAYING');report.speaker='PLAYING (audible confirmation still needed)';update()};
+    msg.onend=()=>{set('speakerResult','DONE');report.speaker='Playback finished (audible confirmation still needed)';update()};
+    msg.onerror=e=>{set('speakerResult','ERROR');report.speaker='FAIL: '+e.error;update()};
+    window.speechSynthesis.speak(msg);
+  }
+  el('health').addEventListener('click',checkWhisper);
+  el('record').addEventListener('click',runRecord);
+  el('stop').addEventListener('click',stopRecording);
+  el('speak').addEventListener('click',testSpeaker);
+  el('copy').addEventListener('click',async()=>{
+    try {await navigator.clipboard.writeText(JSON.stringify(report,null,2));set('current','Report copied.');}
+    catch(e){set('current','Copy blocked; take a screenshot of the report instead.');}
+  });
+  el('refresh').addEventListener('click',checkWhisper);
+  update();
+  void checkWhisper();
+})();
+</script>
+</body></html>

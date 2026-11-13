@@ -1,0 +1,105 @@
+﻿# Dependencies
+node_modules/
+**/node_modules/
+
+# Environment variables and credentials
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+
+# Build outputs
+dist/
+**/dist/
+build/
+coverage/
+.vite/
+*.tsbuildinfo
+
+# Local backups
+backup-*/
+*-backup-*/
+*backup*/
+*backup-*.zip
+
+# Local temporary files
+*.tmp
+*.temp
+.cache/
+.DS_Store
+Thumbs.db
+
+# Editor folders
+.vscode/
+.idea/
+
+# Local AI configuration
+.claude/
+
+# Python virtual environments
+.venv/
+venv/
+env/
+**/.venv/
+**/venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Local AI model files
+*.gguf
+*.safetensors
+*.onnx
+*.pt
+*.pth
+
+# Large generated data
+*.wav
+*.mp3
+*.mp4
+
+# Python virtual environments
+.venv/
+venv/
+env/
+**/.venv/
+**/venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Local AI model files
+*.gguf
+*.safetensors
+*.onnx
+*.pt
+*.pth
+
+# Large generated data
+*.wav
+*.mp3
+*.mp4
+
+# Additional Python environments
+.venv-*/
+**/.venv-*/
+
+# Temporarily exclude environment template pending review
+.env.example

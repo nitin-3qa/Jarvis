@@ -1,0 +1,64 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>JARVIS Control</title>
+<style>
+body{font:16px system-ui;background:#051018;color:#e4fcff;max-width:760px;margin:30px auto;padding:15px}
+h1{color:#66dfe9;letter-spacing:.2em}main{border:1px solid #247883;border-radius:15px;padding:20px;background:#0a1c26}
+#history{height:320px;overflow:auto;border:1px solid #234e59;padding:15px;white-space:pre-wrap;overflow-wrap:anywhere}
+form,.controls{display:flex;gap:9px;margin-top:14px;flex-wrap:wrap}input[type=text]{flex:1;min-width:150px;padding:12px}
+button,input{font:inherit;border-radius:7px}button{cursor:pointer;background:#106079;border:1px solid #48b7c7;color:white;padding:10px}
+button:disabled{opacity:.5}p{color:#b0cbd1}#status{color:#76f2d9}.message{margin-bottom:12px}
+</style></head><body><h1>J.A.R.V.I.S.</h1><p>Local AI voice + text fallback</p><main>
+<strong id="status">Connecting...</strong><div class="controls"><button id="reconnect">Reconnect</button><button id="stop">Stop</button><button id="voiceTest">Test voice</button></div>
+<div id="history" role="log" aria-live="polite"></div>
+<form id="form"><input id="question" type="text" maxlength="5000" placeholder="Ask JARVIS" aria-label="Question"><button id="send">Send</button></form>
+<div class="controls"><button id="mic">🎙 Push to talk</button><label><input id="speak" type="checkbox" checked> Speak answers</label></div>
+<p>Speech recognition in Chrome/Edge may use an online service. Only enable the mic when needed. <a href="/" style="color:#80f5ff">Back to hologram</a></p></main>
+<script>
+(()=>{
+'use strict';
+const $=id=>document.getElementById(id), S=window.speechSynthesis;
+let ws,ready=false,id=null,reply='',out=null,rec=null,listening=false,timer=null;
+const Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;
+function state(s){$('status').textContent=s;}
+function line(w,t){const p=document.createElement('div');p.className='message';p.textContent=w+': '+t;$('history').append(p);$('history').scrollTop=$('history').scrollHeight;return p;}
+function stop(){
+ if(id&&ws?.readyState===1)ws.send(JSON.stringify({type:'interrupt'}));
+ id=null;clearTimeout(timer);$('send').disabled=!ready;
+ S?.cancel();if(listening)try{rec.abort()}catch{};
+ listening=false;$('mic').textContent='🎙 Push to talk';state(ready?'Ready':'Disconnected');
+}
+function connect(){
+ stop();ready=false;$('send').disabled=true;
+ if(ws){ws.onclose=null;ws.close()}state('Connecting...');
+ ws=new WebSocket('ws://127.0.0.1:8787/');
+ ws.onopen=()=>state('Connected — waiting for ready');
+ ws.onerror=()=>state('Connection error — check bridge terminal');
+ ws.onclose=()=>{ready=false;id=null;$('send').disabled=true;state('Disconnected — press Reconnect')};
+ ws.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}
+   if(m.type==='ready'){ready=true;$('send').disabled=false;state('Ready · '+(m.model||'Ollama'));return}
+   if(m.type==='error'&&(!m.ask||m.ask===id)){line('ERROR',String(m.message||'Bridge error'));id=null;clearTimeout(timer);$('send').disabled=false;state('Error');return}
+   if(!id||m.ask!==id)return;
+   if(m.type==='text'){reply+=String(m.delta||'');out.textContent='JARVIS: '+reply}
+   if(m.type==='done'){reply=reply||String(m.text||'');out.textContent='JARVIS: '+(reply||'(empty)');id=null;clearTimeout(timer);$('send').disabled=false;state('Ready');if(reply&&$('speak').checked)say(reply)}
+ };
+}
+function ask(t){t=t.trim();if(!t)return;if(!ready){state('Connect first');return}
+ stop();id='req_'+Date.now();reply='';line('YOU',t);out=line('JARVIS','Thinking...');$('send').disabled=true;state('Thinking...');
+ ws.send(JSON.stringify({type:'ask',id,text:t}));
+ const pending=id;timer=setTimeout(()=>{if(id!==pending)return;line('ERROR','Response timed out');stop()},120000);
+}
+function say(t){if(!S){state('Browser voice unavailable');return}S.cancel();const u=new SpeechSynthesisUtterance(t.slice(0,2500));u.lang='en-GB';u.rate=.95;u.onerror=e=>state('Voice error: '+e.error);S.speak(u)}
+$('form').onsubmit=e=>{e.preventDefault();const t=$('question').value;$('question').value='';ask(t)};
+$('reconnect').onclick=connect;$('stop').onclick=stop;
+$('voiceTest').onclick=()=>say('JARVIS voice systems operational.');
+$('mic').onclick=()=>{
+ if(!Recognition){state('Speech recognition not supported');return}
+ if(listening){rec.stop();return}S?.cancel();rec=new Recognition();rec.lang='en-IN';rec.continuous=false;rec.interimResults=false;
+ rec.onstart=()=>{listening=true;$('mic').textContent='Stop listening';state('Listening...')};
+ rec.onresult=e=>{const t=e.results[0][0].transcript;if(t){$('question').value=t;ask(t)}};
+ rec.onerror=e=>state('Microphone error: '+e.error);
+ rec.onend=()=>{listening=false;$('mic').textContent='🎙 Push to talk'};
+ try{rec.start()}catch(e){state(e.message)}
+};
+connect();
+})();
+</script></body></html>
